@@ -1,0 +1,28 @@
+# PrivateVault
+
+Privacy-preserving decentralized storage combining Keypo's encryption SDK with Synapse's Filecoin storage capabilities.
+
+## Project Structure
+
+```
+filecoin-alpha-cohort/
+├── README.md                                    # This file
+├── src/                                         # Implementation code (TBD)
+└── requirements/
+    ├── keypo-synapse-integration-architecture.md    # Main technical design
+    ├── simplified_privatevault_submission.md        # Hackathon submission
+    ├── filecoin_hackathon_guidelines.md            # Contest requirements
+    ├── keypo-docs/                                 # Keypo SDK documentation
+    │   ├── keypo.io_docs*.md                       # API documentation
+    │   └── raw-sdk-code/keypo-sdk-main/            # Keypo SDK source
+    └── synapse-sdk-docs/                           # Synapse SDK documentation
+        ├── Docs/                                   # Comprehensive tech docs
+        └── synapse-sdk-master/                     # Synapse SDK source
+```
+
+## Key Documents
+
+- **[Architecture](requirements/keypo-synapse-integration-architecture.md)** - Technical design and integration patterns
+- **[Submission](requirements/simplified_privatevault_submission.md)** - Hackathon project overview
+- **[Keypo Docs](requirements/keypo-docs/)** - Encryption SDK documentation  
+- **[Synapse Docs](requirements/synapse-sdk-docs/Docs/)** - Filecoin storage SDK documentation

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "lib": ["es2020", "dom"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist/esm",
+    "rootDir": "./src",
+    "types": ["node"],
+    "declaration": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "tests", "**/*.test.ts", "**/*.test.js"]
+} 
