@@ -23,6 +23,4 @@ filecoin-alpha-cohort/
 ## Key Documents
 
 - **[Architecture](requirements/keypo-synapse-integration-architecture.md)** - Technical design and integration patterns
-- **[Submission](requirements/simplified_privatevault_submission.md)** - Hackathon project overview
-- **[Keypo Docs](requirements/keypo-docs/)** - Encryption SDK documentation  
-- **[Synapse Docs](requirements/synapse-sdk-docs/Docs/)** - Filecoin storage SDK documentation
+- **[Submission](requirements/phase1_submission.md)** - Hackathon project overview
