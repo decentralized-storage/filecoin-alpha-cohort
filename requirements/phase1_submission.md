@@ -21,11 +21,12 @@ While Filecoin Onchain Cloud offers unique advantages (self-custody, censorship 
 
 ## Solution
 
-**What We're Building**: A unified SDK that combines Keypo's encryption with Synapse's Filecoin storage to enable privacy-preserving decentralized applications.
+**What We're Building**: A unified SDK (`@keypo/synapse-sdk`) that combines Keypo's encryption with Synapse's Filecoin storage to enable privacy-preserving decentralized applications.
 
 **For Developers**:
-- **Plug-and-Play Privacy**: Add encryption to existing Synapse storage with just a few lines of code
-- **Flexible Access Control**: Define access rules using smart contracts, token balances, NFT ownership, or custom logic
+- **Single Package**: Import everything from `@keypo/synapse-sdk` - no need for separate Synapse SDK
+- **On-chain access control**: Contract deployment and NFT minting happen automatically on upload
+- **Simple Interface**: All operations use `commp` as the primary identifier
 
 **For End Users**:
 - **True Data Ownership**: Users control their encryption keys and access permissions
@@ -33,7 +34,7 @@ While Filecoin Onchain Cloud offers unique advantages (self-custody, censorship 
 - **Seamless UX**: Works with email-based sign-ins through embedded wallets (Privy, Turnkey, Dynamic)
 - **Gasless Operations**: No need to hold crypto or pay gas fees for encryption/decryption
 
-**Key Innovation**: Boundary encryption pattern where Keypo handles encryption/decryption while Synapse manages Filecoin storage.
+**Key Innovation**: Boundary encryption pattern where Keypo handles encryption/decryption while Synapse manages Filecoin storage. On-chain access control conditions combined with decentralized key management means a fully decentralized encryption solution for filecoin onchain cloud. 
 
 ---
 
@@ -45,6 +46,19 @@ While Filecoin Onchain Cloud offers unique advantages (self-custody, censorship 
 You can find our complete design document here: `keypo-synapse-integration-architecture.md`
 
 Our technical design follows a **wrapper pattern** that integrates Keypo's encryption capabilities with Synapse's storage infrastructure:
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Application   │    │   Keypo         │    │ Filecoin Network│
+│                 │    │   Integration   │    │                 │
+├─────────────────┤    ├─────────────────┤    ├─────────────────┤
+│                 │    │                 │    │                 │
+│ User Data       │───▶│ Keypo Encrypt   │    │ Synapse Storage │
+│ Access Rules    │    │ Access Control  │───▶│ PDP Verification│
+│ Wallet Auth     │    │ Synapse Upload  │    │ Payment Rails   │
+│                 │    │                 │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
 
 ```
 ## Encryption Flow
@@ -106,70 +120,57 @@ Our technical design follows a **wrapper pattern** that integrates Keypo's encry
 
 ### Core Integration Components
 
-#### 1. **Keypo-Synapse Integration Layer**
-- **Location**: New `src/keypo/` module in Synapse SDK  
-- **Components**: 
-  - `KeypoSynapseIntegration` - Main integration class
-  - `EncryptedStorageService` - Enhanced storage with encryption
-  - `WalletBridge` - Handles Viem/Ethers compatibility
-  - `DataIdentifierMapper` - Maps CommP to Keypo dataIdentifiers
+#### 1. **Unified @keypo/synapse-sdk Package**
+- **Single Package**: Everything bundled in `@keypo/synapse-sdk`
+- **Internal Components**: 
+  - Synapse SDK bundled as internal dependency
+  - Keypo encryption/decryption capabilities
+  - Smart contract deployment (automatic)
+  - NFT minting (automatic)
+  - Subgraph querying for data lookup
 
-#### 2. **Workflow Coordinators**
-- **EncryptionFlowCoordinator**: Manages Keypo encrypt → Synapse store → on-chain actions
-- **DecryptionFlowCoordinator**: Manages Synapse retrieve → Keypo decrypt → postprocess  
+#### 2. **Key Identifiers & Mapping**
+- **commp**: Primary identifier (Synapse) - used in all wrapper functions
+- **dataIdentifier**: Internal Keypo identifier - handled automatically
+- **Automatic Mapping**: Smart contracts store mapping, subgraph indexes for lookup  
 
-#### 3. **Data Management Strategy**
-- **CommP Mapping**: Store Keypo `dataIdentifier` mappings in IPFS metadata
-- **Access Control Registry**: On-chain registry linking CommP to access conditions
-- **Metadata Coordination**: Unified metadata structure across both systems
-
-### Deep Filecoin Onchain Cloud Integration
-
-#### **Synapse Integration (Primary)**
-- **Storage Operations**: Upload encrypted data using Synapse's `StorageService`
-- **Payment Integration**: Use Synapse's `PaymentsService` for USDFC token management
-- **PDP Verification**: Leverage proof-of-data-possession for encrypted data integrity
-- **Provider Network**: Access to Synapse's approved storage provider ecosystem
-- **CDN Integration**: Global retrieval of encrypted data with optional CDN acceleration
-
-#### **Advanced Filecoin Features**
-- **CommP Verification**: Verify data integrity using Filecoin's Piece Commitment system even when encrypted
-- **Proof Set Management**: Group related encrypted files in Synapse proof sets for efficiency
-- **Payment Rails**: Automated micropayments for storage based on actual usage
-- **Retrieval Markets**: Access encrypted data from any Filecoin retrieval provider
+#### 3. **Simplified Workflow**
+- **Upload**: Always includes encryption, contract deployment, and NFT minting
+- **Search**: Only takes search term string, returns results with commp
+- **Operations**: All functions (share, delete, download) use commp as identifier
+- **Internal Handling**: Package automatically manages dataIdentifier lookup via subgraph
 
 ### Example Implementation
 
 ```typescript
-// Initialize PrivateVault
-const privateVault = new PrivateVault({
-  synapse: await Synapse.create({ privateKey: '0x...' }),
-  keypo: {
-    apiUrl: 'https://api.keypo.io',
-    walletClient: createWalletClient({ ... }),
-    authorization: await signAuthorization(...)
-  }
-})
+// Import unified SDK
+import { init, uploadEncrypted, downloadDecrypted, search } from '@keypo/synapse-sdk';
 
-// Store encrypted data with access control
-const textData = 'Patient Record #123';
-const { dataOut, metadataOut } = await privateVault.preProcess(
-  textData, 
-  'patient-record-123',
-  metadataIn: {
-    type: "medical",
-    classification: "confidential"
-  }
-  );
-const result = await privateVault.storePrivate(dataOut, metadataOut);
+// Initialize with wallet only
+const privateKey = '0x...';
+const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+const ethersWallet = new ethers.Wallet(privateKey, provider);
 
-console.log(`Stored with CommP: ${result.commp}`)
-console.log(`Data ID: ${result.dataIdentifier}`)
+await init({
+  wallet: ethersWallet,
+  rpcURL: RPC_URL
+});
 
-// Retrieve and decrypt (only if access conditions met)
-const decryptedData = await privateVault.retrievePrivate(result.commp, {
-  wallet: doctorWallet // Must satisfy access conditions
-})
+// Store encrypted data (automatically deploys contract & mints NFT)
+const result = await uploadEncrypted('Patient Record #123', {
+  name: 'patient-record-123'
+});
+
+console.log(`Stored with CommP: ${result.commp}`);
+console.log(`Smart Contract: ${result.dataContractAddress}`);
+console.log(`Owner NFT: ${result.ownerNFT}`);
+
+// Search for data (only takes search term)
+const searchResults = await search('patient-record');
+const commp = searchResults[0].commp;
+
+// Retrieve and decrypt using commp
+const decryptedData = await downloadDecrypted(commp);
 ```
 
 ---
@@ -180,9 +181,9 @@ const decryptedData = await privateVault.retrievePrivate(result.commp, {
 **Target**: Web3 developers building privacy-sensitive applications
 
 **Approach**: 
-- Build as optional extension to existing Synapse SDK
-- Target developers already familiar with Filecoin or Synapse
-- Focus on use cases impossible with current decentralized storage
+- Build as unified `@keypo/synapse-sdk` package with Synapse bundled internally
+- Simplified API requiring only wallet and RPC URL
+- Automatic smart contract deployment and NFT minting on every upload
 
 **Impact**: Enable privacy-sensitive applications to use Filecoin, expanding the ecosystem into regulated industries.
 

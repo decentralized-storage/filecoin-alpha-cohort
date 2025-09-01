@@ -180,7 +180,7 @@ const uploadResult = await storage.upload(dataOut);
 // when we deploy the permissioned contract (see next phase)
 ```
 
-#### Phase 3: On-Chain Actions (Always Included)
+#### Phase 3: On-Chain Actions 
 ```typescript
 // Step 4: Use the same Viem wallet already created for on-chain actions
 // (viemWallet and authorization were already created above for encryption)
