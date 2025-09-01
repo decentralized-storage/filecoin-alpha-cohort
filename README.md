@@ -10,8 +10,8 @@ filecoin-alpha-cohort/
 ├── src/                                         # Implementation code (TBD)
 └── requirements/
     ├── keypo-synapse-integration-architecture.md    # Main technical design
-    ├── simplified_privatevault_submission.md        # Hackathon submission
-    ├── filecoin_hackathon_guidelines.md            # Contest requirements
+    ├── simplified_privatevault_submission.md        # Filecoin Alpha Cohort Phase 1 Submission
+    ├── filecoin_hackathon_guidelines.md            # Filecoin Alpha Cohort Phase 1 guidelines (background doc)
     ├── keypo-docs/                                 # Keypo SDK documentation
     │   ├── keypo.io_docs*.md                       # API documentation
     │   └── raw-sdk-code/keypo-sdk-main/            # Keypo SDK source

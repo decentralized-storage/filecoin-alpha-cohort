@@ -4,6 +4,8 @@
 
 This document outlines the architecture for integrating Keypo's encryption SDK into the Synapse SDK to enable private data storage on Filecoin. The integration follows a "wrapper" pattern where Keypo handles encryption/decryption at the boundaries while maintaining minimal changes to Synapse's core functionality.
 
+**NOTE**: This is our first iteration of what an implementation will look like. We expect this to change as we start building. 
+
 ## Design Principles
 
 1. **Minimal Synapse Changes**: Keypo integration should require minimal modifications to existing Synapse SDK architecture
@@ -13,32 +15,18 @@ This document outlines the architecture for integrating Keypo's encryption SDK i
 
 ## Integration Patterns
 
-### Pattern 1: Wrapper Functions (Recommended)
+### Wrapper Functions
 
 Create high-level wrapper functions that combine Keypo and Synapse operations:
 
 ```typescript
-// New wrapper functions in Synapse SDK
-async function uploadEncrypted(data, keypoConfig, synapseConfig)
-async function downloadDecrypted(commp, keypoConfig, synapseConfig)
-async function proxyExecuteWithSynapse(dataIdentifier, proxyConfig, synapseConfig)
-```
-
-### Pattern 2: Enhanced StorageService
-
-Extend Synapse's `StorageService` with optional Keypo integration:
-
-```typescript
-interface StorageServiceOptions {
-  // Existing options...
-  keypoIntegration?: KeypoIntegrationConfig
-}
-
-class StorageService {
-  // Existing methods...
-  async uploadWithEncryption(data, keypoConfig)
-  async downloadWithDecryption(commp, keypoConfig)
-}
+// New wrapper functions in Synapse SDK integration layer
+// These use commp as the primary identifier (Synapse-centric approach)
+async function uploadEncrypted(data, options?: { name: string })
+async function downloadDecrypted(commp: string)
+async function shareData(commp: string, recipientAddresses: string[])  // Looks up dataIdentifier via subgraph
+async function deleteData(commp: string)  // Looks up dataIdentifier via subgraph
+async function searchData(searchTerm: string) // Takes only search term, returns results with commp
 ```
 
 ## Core Architecture Components
@@ -48,22 +36,44 @@ class StorageService {
 **Location**: New module `src/keypo/` in Synapse SDK
 
 **Components**:
-- `KeypoSynapseIntegration` - Main integration class
-- `EncryptedStorageService` - Enhanced storage service with encryption
-- `KeypoDataProcessor` - Handles Keypo data transformations
+- `KeypoSynapseIntegration` - Main integration class that wraps Keypo SDK functions
+- `EncryptedStorageService` - Enhanced storage service combining Keypo encryption with Synapse storage
+- `KeypoDataProcessor` - Handles data transformations between Keypo and Synapse formats
 - `IntegrationTypes` - TypeScript interfaces for integration
+
+**Note**: All Keypo functionality (encrypt, decrypt, search, share, delete, deployPermissionedFileContract, mintOwnerNFT) comes from the `@keypo/typescript-sdk` package.
 
 ### 2. Wallet Compatibility Bridge
 
-**Challenge**: Keypo uses Viem (encryption) and Ethers v5 (decryption), Synapse uses Ethers v6
+**User Interface**: Users always provide an Ethers v6 wallet (standard in Synapse SDK)
 
-**Solution**: Create wallet adapter utilities:
+**Internal Conversions** (handled automatically):
+- **Encryption/Share/Delete**: Convert Ethers v6 → Viem WalletClient
+- **Decryption**: Use Ethers v6 directly (compatible with v5 requirements)
+
+**Solution**: Simplified wallet adapter (used internally):
 
 ```typescript
-interface WalletBridge {
-  toViemWallet(ethersWallet: ethers.Signer): WalletClient
-  toEthersV5Wallet(ethersV6Wallet: ethers.Signer): ethers.v5.Wallet
-  createAuthorization(wallet: ethers.Signer, kernelAddress: string): Promise<Authorization>
+// Internal wallet bridge - users never see this
+class WalletBridge {
+  private static readonly KERNEL_ADDRESS = '0x...' // Internal constant
+  
+  // Convert user's Ethers v6 wallet to Viem for encryption operations
+  static toViemWallet(ethersWallet: ethers.Signer): WalletClient {
+    const account = privateKeyToAccount(ethersWallet.privateKey)
+    return createWalletClient({
+      account,
+      chain: baseSepolia,
+      transport: http()
+    })
+  }
+  
+  // Create authorization for Keypo operations (internal)
+  static async createAuthorization(viemWallet: WalletClient): Promise<Authorization> {
+    return await viemWallet.signAuthorization({
+      contractAddress: this.KERNEL_ADDRESS as `0x${string}`
+    })
+  }
 }
 ```
 
@@ -72,25 +82,32 @@ interface WalletBridge {
 **Encryption Flow Coordinator**:
 ```typescript
 class EncryptionFlowCoordinator {
-  async executeEncryptedUpload(data: any, keypoConfig: KeypoConfig, synapseConfig: SynapseConfig) {
+  private walletBridge: WalletBridge;
+  
+  async executeEncryptedUpload(data: any, ethersWallet: ethers.Signer, dataName: string) {
+    // Convert wallet internally for Keypo operations
+    const viemWallet = WalletBridge.toViemWallet(ethersWallet);
+    const authorization = await WalletBridge.createAuthorization(viemWallet);
+    
     // 1. Keypo preprocessing
-    const { dataOut, metadataOut } = await preProcess(data, keypoConfig.name)
+    const { dataOut, metadataOut } = await preProcess(data, dataName)
     
-    // 2. Keypo encryption
-    const { dataCID, dataIdentifier } = await encrypt(dataOut, keypoConfig.wallet, metadataOut, keypoConfig.authorization)
+    // 2. Keypo encryption (using internally converted wallet)
+    const dataIdentifier = await encrypt(dataOut, viemWallet, metadataOut, authorization)
     
-    // 3. Synapse storage
-    const synapseResult = await synapse.storage.upload(encryptedData)
+    // 3. Synapse storage (dataOut is the encrypted data)
+    const synapseResult = await synapse.storage.upload(dataOut)
     
-    // 4. Optional: Deploy permissioned contract + mint NFT
-    if (keypoConfig.deployContract) {
-      await this.deployPermissionedContract(dataIdentifier, synapseResult.commp)
-    }
+    // 4. Deploy permissioned contract + mint NFT
+    // This stores the dataIdentifier ↔ commp mapping on-chain
+    const result = await this.deployPermissionedContract(metadataOut, dataIdentifier, synapseResult.commp)
+    await this.mintOwnerNFT(result.dataContractAddress)
     
     return {
       dataIdentifier,
       commp: synapseResult.commp,
-      keypoMetadata: { dataCID, dataIdentifier },
+      dataContractAddress: result.dataContractAddress,
+      keypoMetadata: {dataIdentifier, metadataOut},
       synapseMetadata: synapseResult
     }
   }
@@ -99,68 +116,126 @@ class EncryptionFlowCoordinator {
 
 ## Detailed Integration Workflows
 
+This is how we will implement encryption and decryption under the hood.
+
+### Key Identifiers
+- **`commp`** (Synapse): Primary identifier used in wrapper functions - content identifier for Filecoin storage
+- **`dataIdentifier`** (Keypo): Internal identifier for encrypted data operations
+- **Lookup**: When operations need `dataIdentifier`, subgraph lookup using `commp` retrieves it automatically
+
+### Commp to DataIdentifier Lookup Pattern
+```typescript
+// Then use Keypo's getDataInfo for additional metadata if needed
+async function getDataInfoFromCommp(commp: string): Promise<DataInfo | null> {
+  const dataIdentifier = await getDataIdentifierFromCommp(commp);
+  if (!dataIdentifier) return null;
+  
+  // Use Keypo's existing getDataInfo function
+  return await getDataInfo(dataIdentifier);
+}
+```
+
 ### 1. Encrypted Storage Workflow
 
 #### Phase 1: Keypo Encryption
 ```typescript
-// Input: Original data + Keypo configuration
-const originalData = "Hello World"
-const keypoConfig = {
-  wallet: viemWallet,
-  authorization: signedAuthorization,
-  name: "my-private-data",
-  accessConditions: [/* EVM conditions */]
-}
+// Import functions from unified SDK
+import { preProcess, encrypt, init } from '@keypo/synapse-sdk';
 
-// Step 1: Preprocess data for encryption
-const { dataOut, metadataOut } = await preProcess(originalData, keypoConfig.name)
+// User provides Ethers v6 wallet (standard Synapse pattern)
+const ethersWallet = new ethers.Wallet(privateKey, provider);
 
-// Step 2: Encrypt data with access controls
-const { dataCID, dataIdentifier } = await encrypt(
-  dataOut, 
-  keypoConfig.wallet, 
-  metadataOut, 
-  keypoConfig.authorization
-)
+// Internal: KeypoSynapseIntegration handles Keypo initialization
+// Convert to Viem wallet for Keypo encryption (hidden from user)
+const viemWallet = WalletBridge.toViemWallet(ethersWallet);
+const authorization = await WalletBridge.createAuthorization(viemWallet);
+
+// Step 1: Preprocess data for encryption (Keypo SDK)
+const { dataOut, metadataOut } = await preProcess(originalData, "my-data-name");
+
+// Step 2: Encrypt data with access controls (Keypo SDK)
+const dataIdentifier = await encrypt(
+  dataOut,  // This gets modified in place to encrypted form
+  viemWallet,
+  metadataOut,
+  authorization
+);
 ```
 
 #### Phase 2: Synapse Storage
 ```typescript
-// Step 3: Store encrypted data via Synapse
-const encryptedData = await fetchFromIPFS(dataCID) // Get encrypted bytes
-const synapseResult = await synapse.storage.upload(encryptedData)
+// Step 3: Store encrypted data via Synapse (using same Ethers v6 wallet)
+const synapse = await Synapse.create({
+  privateKey: ethersWallet.privateKey,
+  rpcURL: RPC_URLS.calibration.websocket  // Use calibration testnet for testing
+})
 
-// Result includes CommP for Filecoin storage verification
-console.log(`Stored with CommP: ${synapseResult.commp}`)
+// Create storage service
+const storage = await synapse.createStorage()
+
+// Upload encrypted data (dataOut was encrypted in place)
+const uploadResult = await storage.upload(dataOut);
+
+// The mapping between dataIdentifier and commp will be stored on-chain
+// when we deploy the permissioned contract (see next phase)
 ```
 
-#### Phase 3: On-Chain Actions (Optional)
+#### Phase 3: On-Chain Actions (Always Included)
 ```typescript
-// Step 4: Deploy permissioned file contract
-const permissionContract = await deployPermissionedFileContract({
-  dataIdentifier,
-  commp: synapseResult.commp,
-  accessConditions: keypoConfig.accessConditions
-})
+// Step 4: Use the same Viem wallet already created for on-chain actions
+// (viemWallet and authorization were already created above for encryption)
 
-// Step 5: Mint owner NFT
-const ownerNFT = await mintOwnerNFT({
-  owner: keypoConfig.wallet.address,
-  permissionContract: permissionContract.address,
-  dataIdentifier
-})
+// Step 5: Deploy permissioned file contract (always happens)
+import { deployPermissionedContract } from '@keypo/synapse-sdk';
+const result = await deployPermissionedContract(
+  metadataOut,      // Contains name and other metadata
+  dataIdentifier,   // Keypo's unique ID
+  uploadResult.commp  // Synapse's storage ID - gets indexed by subgraph
+)
+// This stores the dataIdentifier ↔ commp mapping on-chain,
+// making it queryable via Keypo's subgraph
+
+// Step 6: Mint owner NFT (always happens)
+import { mintOwnerNFT } from '@keypo/synapse-sdk';
+const ownerNFT = await mintOwnerNFT(result.dataContractAddress)
 ```
 
 ### 2. Decryption Retrieval Workflow
 
-#### Phase 1: Synapse Retrieval
+#### Phase 1: Synapse Retrieval and wallet setup
 ```typescript
-// Input: CommP from previous storage + Keypo configuration
-const commp = "baga6ea4seaq..." // From previous upload
-const keypoConfig = {
-  wallet: ethersV5Wallet,
-  authorization: signedAuthorization
+// Import search function from unified SDK
+import { search } from '@keypo/synapse-sdk';
+
+// Use search to find data by name (only takes search term)
+// This queries the subgraph which indexed the smart contract data
+const searchResults = await search("my-data-name");
+
+// Search returns array of matches from the subgraph:
+/*
+{
+  commp: string,             // Synapse commp (from smart contract)
+  dataContractAddress: string, // Smart contract address managing access
+  dataIdentifier: string,   // Unique identifier for the data
+  dataMetadata: {           // Metadata associated with the data
+    name: string,           // Human-readable name for the data
+    type: string,           // The detected type of the input data
+    mimeType?: string,      // The detected MIME type (present for File/Blob inputs)
+    subtype?: string,       // Additional type information (e.g., 'bigint', 'base64', 'json')
+    userMetaData?: string   // Any custom metadata provided during preprocessing (JSON stringified)
+  },
+  owner: string,            // The wallet address that owns this data
+  isAccessMinted: boolean   // Whether this data was accessed through a minted permission
 }
+*/
+
+const metaData = searchResults[0]; // Get first match
+const commp = metaData.commp;
+const dataId = metaData.dataIdentifier;
+
+// User provides standard Ethers v6 wallet
+const ethersWallet = new ethers.Wallet(privateKey, provider);
+// Keypo config is handled internally by KeypoSynapseIntegration
 
 // Step 1: Retrieve encrypted data from Synapse
 const encryptedData = await synapse.download(commp)
@@ -168,108 +243,99 @@ const encryptedData = await synapse.download(commp)
 
 #### Phase 2: Keypo Decryption
 ```typescript
-// Step 2: Determine dataIdentifier (stored in metadata or retrieved from contract)
-const dataIdentifier = await getDataIdentifierFromCommP(commp)
+// Import functions from unified SDK
+import { decrypt, postProcess } from '@keypo/synapse-sdk';
 
-// Step 3: Decrypt data
+// Step 3: Decrypt data (Keypo SDK - Ethers v6 works directly)
 const { decryptedData, metadata } = await decrypt(
-  dataIdentifier,
-  keypoConfig.wallet,
-  keypoConfig.authorization
-)
+  dataId, 
+  ethersWallet,  // Ethers v6 is compatible
+  config.decryptConfig
+);
 
-// Step 4: Postprocess to original format
+// Step 4: Postprocess to original format (Keypo SDK)
 const originalData = await postProcess(decryptedData, metadata)
 console.log("Decrypted data:", originalData)
 ```
 
-### 3. Proxy Execution Workflow
+### 3. Share and Delete Workflow
 
-#### Encrypted API Key Storage
 ```typescript
-// Step 1: Encrypt API key for proxy execution
-const { dataCID, dataIdentifier } = await encryptForProxy(
-  apiKey,
-  proxyWallet,
-  metadata,
-  authorization
-)
+// Import functions from the unified package
+import { share, deleteData } from '@keypo/synapse-sdk';
 
-// Step 2: Store encrypted key via Synapse
-const synapseResult = await synapse.storage.upload(await fetchFromIPFS(dataCID))
-```
+// User provides commp (Synapse identifier)
+const ethersWallet = new ethers.Wallet(privateKey, provider);
 
-#### Proxy Execution with Retrieval
-```typescript
-// Step 1: Retrieve encrypted API key
-const encryptedKey = await synapse.download(commp)
+// Internal: Convert to Viem for share/delete operations
+const viemWallet = WalletBridge.toViemWallet(ethersWallet);
+const authorization = await WalletBridge.createAuthorization(viemWallet);
 
-// Step 2: Execute API call without exposing key
-const result = await proxyExecute(
-  dataIdentifier,
-  proxyExecutionWallet,
-  authorization,
-  {
-    apiEndpoint: "https://api.example.com/data",
-    method: "GET",
-    headers: { "Authorization": "Bearer ${DECRYPTED_KEY}" }
-  }
-)
+// Lookup dataIdentifier from commp using subgraph (internal)
+const dataIdentifier = await getDataIdentifierFromCommp(commp);
+if (!dataIdentifier) {
+  throw new Error(`No data found for commp: ${commp}`);
+}
+
+// Share data with another user (using Keypo SDK)
+await share(dataIdentifier, recipientAddress, viemWallet, authorization);
+
+// Delete data (using Keypo SDK)
+await deleteData(dataIdentifier, viemWallet, authorization);
 ```
 
 ## Integration Points
 
-### 1. Synapse SDK Modifications
+### 1. Unified Package Architecture
 
-**Minimal Required Changes**:
+**New Approach**: Single `@keypo/synapse-sdk` package that includes:
 
-1. **New Optional Dependency**: Add `@keypo/typescript-sdk` as optional peer dependency
-2. **Wallet Bridge Utilities**: Add utilities to convert between wallet formats
-3. **Integration Module**: New `src/keypo/` module with wrapper functions
-4. **Type Extensions**: Extend existing interfaces with optional Keypo configurations
+1. **Bundled Synapse SDK**: Synapse functionality integrated as internal dependency
+2. **Keypo Encryption**: All encryption/decryption capabilities
+3. **Unified Interface**: Single package with all functions (upload, download, share, delete, search)
+4. **Smart Contract Integration**: Automatic contract deployment and NFT minting
 
-**Modified Files**:
-- `package.json` - Add optional Keypo dependency
-- `src/types.ts` - Add Keypo integration interfaces
-- `src/synapse.ts` - Add optional encrypted storage methods
-- `src/storage/service.ts` - Add encryption-aware upload/download methods
+**Package Structure**:
+- `src/core/` - Core Keypo encryption functionality
+- `src/synapse/` - Bundled Synapse SDK (internal)
+- `src/contracts/` - Smart contract deployment and NFT minting
+- `src/subgraph/` - Subgraph querying for data lookup
+- `src/index.ts` - Unified exports (uploadEncrypted, downloadDecrypted, etc.)
 
-### 2. New Integration Modules
+### 2. Unified Package Exports
 
 ```typescript
-// src/keypo/index.ts
-export * from './integration'
-export * from './wallet-bridge'
-export * from './encrypted-storage'
-export * from './types'
+// @keypo/synapse-sdk - Single package exports
+export async function init(config: {
+  wallet: ethers.Signer,
+  rpcURL: string
+}): Promise<void>
 
-// src/keypo/integration.ts
-export class KeypoSynapseIntegration {
-  constructor(synapseConfig: SynapseConfig, keypoConfig: KeypoConfig)
-  
-  async uploadEncrypted(data: any, options?: EncryptedUploadOptions)
-  async downloadDecrypted(commp: string, options?: DecryptedDownloadOptions)
-  async proxyExecuteWithStorage(dataIdentifier: string, proxyOptions: ProxyOptions)
-}
+// Core functions (all encryption + Synapse storage included)
+export async function uploadEncrypted(data: any, options?: { name: string })
+export async function downloadDecrypted(commp: string)
+export async function shareData(commp: string, recipientAddresses: string[])
+export async function deleteData(commp: string)
+export async function search(searchTerm: string)
 
-// src/keypo/encrypted-storage.ts
-export class EncryptedStorageService extends StorageService {
-  constructor(synapseStorage: StorageService, keypoConfig: KeypoConfig)
-  
-  async uploadWithEncryption(data: any)
-  async downloadWithDecryption(commp: string)
-}
+// Internal modules (not exported)
+// - SynapseClient (handles Filecoin storage)
+// - KeypoEncryption (handles encryption/decryption) 
+// - ContractDeployer (handles smart contracts & NFTs)
+// - SubgraphClient (handles data lookup)
+// - WalletBridge (handles wallet conversions)
 ```
 
 ### 3. Configuration Schema
 
 ```typescript
 interface KeypoIntegrationConfig {
-  // Keypo configuration
-  apiUrl: string
-  walletClient: WalletClient  // Viem wallet for encryption
-  decryptWallet: ethers.v5.Wallet  // Ethers v5 for decryption
-  authorization: Authorization
+  // User provides only Ethers v6 wallet
+  wallet: ethers.Signer  // Standard Ethers v6 wallet from user
+  
+  // Optional: Override defaults (normally not needed)
+  apiUrl?: string  // Defaults to production Keypo API
+  kernelAddress?: string  // Defaults to deployed kernel address
   
   // Integration options
   autoDeployContract?: boolean
@@ -287,13 +353,12 @@ interface KeypoIntegrationConfig {
 interface EncryptedUploadResult {
   // Keypo results
   dataIdentifier: string
-  dataCID: string
+  dataContractAddress: string
   
   // Synapse results
   commp: string
   
   // Integration results
-  permissionContract?: string
   ownerNFT?: string
   
   // Metadata
@@ -307,168 +372,84 @@ interface EncryptedUploadResult {
 
 ## Data Identifier Mapping Strategy
 
-**Challenge**: Need to map Synapse CommP to Keypo dataIdentifier for retrieval
+**Unified Approach**: `@keypo/synapse-sdk` handles all mapping internally
 
-**Solutions**:
+**User Interface**: Users only work with `commp` (Synapse identifiers)
+**Internal Mapping**: Package maintains `dataIdentifier` ↔ `commp` via smart contracts
 
-### Option 1: Metadata Storage (Recommended)
 ```typescript
-// Store mapping in IPFS metadata
-const mappingMetadata = {
-  commp: "baga6ea4seaq...",
-  dataIdentifier: "keypo_data_id_123",
-  timestamp: Date.now(),
-  accessConditions: [...]
-}
+// User uploads data - gets commp back
+const result = await uploadEncrypted("data", { name: "my-file" });
+console.log(result.commp);  // User's primary identifier
 
-// Store mapping CID alongside main data
-const mappingCID = await storeMetadataOnIPFS(mappingMetadata)
-```
+// Package automatically:
+// 1. Encrypts data with Keypo (creates dataIdentifier)
+// 2. Stores on Filecoin with Synapse (creates commp)
+// 3. Deploys smart contract linking both
+// 4. Mints NFT for ownership
+// 5. Subgraph indexes for search
 
-### Option 2: On-Chain Registry
-```typescript
-contract CommPToDataIdentifierRegistry {
-  mapping(bytes32 => string) public commPToDataIdentifier;
-  mapping(string => bytes32) public dataIdentifierToCommP;
-  
-  function registerMapping(bytes32 commp, string memory dataIdentifier) external;
-  function getDataIdentifier(bytes32 commp) external view returns (string memory);
-}
-```
+// User searches by name - gets commp
+const results = await search("my-file");
+const commp = results[0].commp;
 
-### Option 3: Deterministic Encoding
-```typescript
-// Embed dataIdentifier in CommP metadata during storage
-function encodeDataIdentifierInCommP(dataIdentifier: string): CommPMetadata {
-  return {
-    originalCommP: calculateCommP(encryptedData),
-    dataIdentifier: dataIdentifier,
-    encoding: "keypo-v1"
-  }
-}
-```
-
-## Error Handling & Edge Cases
-
-### 1. Wallet Compatibility Issues
-```typescript
-try {
-  const viemWallet = walletBridge.toViemWallet(ethersWallet)
-} catch (error) {
-  throw new KeypoSynapseIntegrationError('Wallet conversion failed', { cause: error })
-}
-```
-
-### 2. Network Mismatches
-```typescript
-// Ensure both SDKs operate on compatible networks
-if (synapseConfig.network !== keypoConfig.chainId) {
-  throw new NetworkMismatchError(`Synapse: ${synapseConfig.network}, Keypo: ${keypoConfig.chainId}`)
-}
-```
-
-### 3. Data Identifier Resolution Failures
-```typescript
-// Fallback strategies for missing mappings
-async function resolveDataIdentifier(commp: string): Promise<string> {
-  try {
-    return await getFromMetadata(commp)
-  } catch {
-    try {
-      return await getFromRegistry(commp)
-    } catch {
-      throw new DataIdentifierNotFoundError(`Cannot resolve dataIdentifier for CommP: ${commp}`)
-    }
-  }
-}
+// User operates with commp - package handles dataIdentifier lookup
+await shareData(commp, ["0xrecipient..."]);
 ```
 
 ## Usage Examples
 
 ### Basic Encrypted Storage
 ```typescript
-import { Synapse } from '@filoz/synapse-sdk'
-import { KeypoSynapseIntegration } from '@filoz/synapse-sdk/keypo'
-import { createWalletClient } from 'viem'
+// Single unified package containing everything
+import { init, search, uploadEncrypted, downloadDecrypted, shareData, deleteData } from '@keypo/synapse-sdk'
 
-// Initialize both SDKs
-const synapse = await Synapse.create({ privateKey: '0x...' })
-const keypoConfig = {
-  apiUrl: 'https://api.keypo.io',
-  walletClient: createWalletClient({ ... }),
-  decryptWallet: ethersV5Wallet,
-  authorization: await signAuthorization(...)
-}
+// User only needs to provide Ethers v6 wallet
+const privateKey = '0x...';
+const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+const ethersWallet = new ethers.Wallet(privateKey, provider);
 
-// Create integration instance
-const integration = new KeypoSynapseIntegration(synapse, keypoConfig)
+// Initialize the unified SDK (Synapse is bundled internally)
+const keypoSynapse = await init({
+  wallet: ethersWallet,
+  rpcURL: RPC_URL
+});
 
-// Upload encrypted data
-const result = await integration.uploadEncrypted("Hello World", {
-  name: "my-secret-data",
-  accessConditions: [{ contractAddress: '0x...', method: 'balanceOf' }]
+// Upload with encryption (always deploys contract & mints NFT)
+const result = await uploadEncrypted("Hello World", {
+  name: "my-secret-data"
 })
 
 console.log(`Data stored with CommP: ${result.commp}`)
-console.log(`Keypo dataIdentifier: ${result.dataIdentifier}`)
-
-// Download and decrypt
-const decryptedData = await integration.downloadDecrypted(result.commp)
-console.log(`Decrypted: ${decryptedData}`) // "Hello World"
-```
-
-### Advanced Integration with NFT Minting
-```typescript
-const result = await integration.uploadEncrypted("Private Document", {
-  name: "private-doc",
-  autoDeployContract: true,
-  mintOwnerNFT: true,
-  accessConditions: [
-    createEVMBalanceCondition('0x...', 1000), // Min 1000 tokens
-    createTimeBasedCondition(Date.now() + 86400000) // Valid for 24h
-  ]
-})
-
-console.log(`Permission Contract: ${result.permissionContract}`)
+console.log(`Smart contract: ${result.dataContractAddress}`)
 console.log(`Owner NFT: ${result.ownerNFT}`)
-```
 
-### Proxy Execution with API Keys
-```typescript
-// Store encrypted API key
-const keyResult = await integration.uploadEncryptedForProxy(apiKey, {
-  name: "openai-api-key",
-  proxyConditions: [{ wallet: authorizedBotWallet.address }]
-})
+// Later: Find data by name (queries the subgraph)
+const searchResults = await search("my-secret-data")  // Only takes search term
+const commp = searchResults[0].commp
 
-// Execute API call without exposing key
-const response = await integration.proxyExecuteWithStorage(keyResult.dataIdentifier, {
-  apiEndpoint: "https://api.openai.com/v1/completions",
-  method: "POST",
-  body: { prompt: "Hello", max_tokens: 50 },
-  headers: { "Authorization": "Bearer ${DECRYPTED_KEY}" }
-})
+// Use commp for all operations - share, delete, download
+const decryptedData = await downloadDecrypted(commp)
+// await shareData(commp, ["0x..."])  // Share with others
+// await deleteData(commp)  // Delete data
+console.log(`Decrypted: ${decryptedData}`) // "Hello World"
 ```
 
 ## Migration Path
 
 ### Phase 1: Core Integration
-1. Add Keypo as optional dependency
-2. Implement wallet bridge utilities
-3. Create basic wrapper functions
-4. Add TypeScript interfaces
+1. Modify Keypo SDK to work correctly with Synapse (main change is removing current upload/download flows from encrypt/decrypt so Synapse can do it)
+2. Add Keypo as optional dependency
+3. Implement wallet bridge utilities
+4. Create basic wrapper functions
+5. Add TypeScript interfaces
 
 ### Phase 2: Enhanced Features  
-1. Implement metadata mapping strategies
-2. Add on-chain registry support
-3. Develop proxy execution integration
-4. Create comprehensive error handling
+1. Add comprehensive error handling
+2. Implement sharing and deleting features
+3. Add advanced search and filtering capabilities
 
-### Phase 3: Advanced Features
-1. Add automatic contract deployment
-2. Implement NFT minting integration
-3. Develop advanced access control patterns
-4. Optimize for gas efficiency
+### Phase 3: Test and fine-tuning
 
 ## Conclusion
 

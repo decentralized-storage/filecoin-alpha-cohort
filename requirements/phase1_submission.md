@@ -9,12 +9,13 @@
 
 **Current Issue**: Developers building privacy-sensitive applications can't use decentralized storage because Filecoin stores data in plaintext with no access controls. Only option today is centralized encryption/access control, which means users don't have complete control over their data.
 
-**Why This Matters**: 
-- 73% of enterprises cite privacy concerns as the main barrier to decentralized storage adoption
-- Healthcare, legal, and financial applications need encrypted storage with compliance features
-- Developers are forced to choose between privacy and decentralization
+**Why Does Encrypted Data Storage Matter**: 
+- 50% of IT executives identified data security and privacy concerns as the main barrier to integrating decentralized storage within their organizations (source: https://fil.org/digest/enterprise-storage-market-insights-from-the-field)
+- Regulated industries including healthcare (HIPAA), finance (PCI DSS, SOX), and any EU data processors (GDPR) have mandatory encryption requirements for sensitive data protection. 
+- Premium content (music, video, games) requires encryption/access control, and direct-to-consumer content distribution is a rapidly growing sector. 
 
-**Filecoin Relevance**: This blocks Filecoin from entering regulated industries and enterprise markets, limiting its growth potential.
+**Why Is This Relevant to Filecoin Onchain Cloud**: 
+While Filecoin Onchain Cloud offers unique advantages (self-custody, censorship resistance, and decentralized architecture) industries that would benefit most from these features are blocked by the lack of encryption and access controls. Native privacy guardrails would enable healthcare, finance, and content creators to leverage Filecoin's verifiable storage and data sovereignty benefits.
 
 ---
 
@@ -24,9 +25,7 @@
 
 **For Developers**:
 - **Plug-and-Play Privacy**: Add encryption to existing Synapse storage with just a few lines of code
-- **Production-Ready**: Both SDKs are battle-tested with comprehensive documentation
 - **Flexible Access Control**: Define access rules using smart contracts, token balances, NFT ownership, or custom logic
-- **Cost Effective**: Pay only for storage used, not for encryption operations
 
 **For End Users**:
 - **True Data Ownership**: Users control their encryption keys and access permissions
@@ -42,7 +41,8 @@
 
 ### Architecture Overview
 
-**Reference Document**: `keypo-synapse-integration-architecture.md`
+**Reference Document**: 
+You can find our complete design document here: `keypo-synapse-integration-architecture.md`
 
 Our technical design follows a **wrapper pattern** that integrates Keypo's encryption capabilities with Synapse's storage infrastructure:
 
@@ -141,11 +141,14 @@ const decryptedData = await privateVault.retrievePrivate(result.commp, {
 
 **Impact**: Enable privacy-sensitive applications to use Filecoin, expanding the ecosystem into regulated industries.
 
-### **Phase 2: Increased Modularity with Proxy Execution** (Months 3-6)
-**Target**: Filecoin infrastructure service providers and web3 developers that want more advanced access control. 
+### **Phase 2: Advanced Access Control with Proxy Execution** (Months 3-6)
+**Target**: Enterprise developers and Filecoin infrastructure providers building production applications with complex access requirements. 
 
 **Approach**:
-- Add Keypo's proxy execution functionality to extension from phase 1, which leverages Trusted execution environments (TEEs) for advanced access controls, like private compute by authorized programs.
-- Create library of TEE programs for advanced access controls. A few examples: resolving service line agreements between filecoin CDNs and storage providers, decentralized digital rights management, secure credential sharing with AI agents. 
+- Integrate Keypo's proxy execution capabilities using Trusted Execution Environments (TEEs) for secure, programmable access control.
+- Develop a library of pre-built TEE programs for common enterprise use cases:
+  - **Service Level Agreements**: Automated enforcement of storage/retrieval contracts between Filecoin CDNs and providers
+  - **Digital Rights Management**: Decentralized content licensing with usage tracking and royalty distribution
+  - **Secure Credential Management**: Safe API key storage and execution for AI agents and automated systems
 
-**Impact**: Enable private compute functionality on top of Filecoin infrastructure. 
+**Impact**: Transform Filecoin from simple storage into a private compute platform where sensitive data can be processed securely, unlocking enterprise AI, automated compliance, and programmable data governance use cases.
