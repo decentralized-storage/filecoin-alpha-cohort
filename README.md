@@ -1,4 +1,4 @@
-# PrivateVault
+# Keypo <> Synapse SDK
 
 Privacy-preserving decentralized storage combining Keypo's encryption SDK with Synapse's Filecoin storage capabilities.
 

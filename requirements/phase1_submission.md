@@ -1,4 +1,4 @@
-# PrivateVault - Wave 1: Product Design
+# Keypo - Wave 1: Product Design
 
 ## Project Name: **Keypo**
 *Encrypted Private Data Storage on Filecoin with Granular Access Control*
@@ -15,7 +15,7 @@
 - Premium content (music, video, games) requires encryption/access control, and direct-to-consumer content distribution is a rapidly growing sector. 
 
 **Why Is This Relevant to Filecoin Onchain Cloud**: 
-While Filecoin Onchain Cloud offers unique advantages (self-custody, censorship resistance, and decentralized architecture) industries that would benefit most from these features are blocked by the lack of encryption and access controls. Native privacy guardrails would enable healthcare, finance, and content creators to leverage Filecoin's verifiable storage and data sovereignty benefits.
+While Filecoin Onchain Cloud offers unique advantages (self-custody, censorship resistance, and decentralized architecture) vs. centralized data storage like S3, industries that would benefit most from these features are blocked by the lack of encryption and access controls. Native privacy guardrails would enable healthcare, finance, and content creators to leverage Filecoin's verifiable storage and data sovereignty benefits.
 
 ---
 
@@ -47,16 +47,61 @@ You can find our complete design document here: `keypo-synapse-integration-archi
 Our technical design follows a **wrapper pattern** that integrates Keypo's encryption capabilities with Synapse's storage infrastructure:
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Application   │    │   Keypo         │    │ Filecoin Network│
-│                 │    │   Integration   │    │                 │
-├─────────────────┤    ├─────────────────┤    ├─────────────────┤
-│                 │    │                 │    │                 │
-│ User Data       │───▶│ Keypo Encrypt   │    │ Synapse Storage │
-│ Access Rules    │    │ Access Control  │───▶│ PDP Verification│
-│ Wallet Auth     │    │ Synapse Upload  │    │ Payment Rails   │
-│                 │    │                 │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+## Encryption Flow
+
+┌──────────┐     ┌─────────────────────────────────────────┐     ┌──────────────────-┐
+│          │     │                  Keypo                  │     │                   │
+│   Data   │────▶│  ┌────────────┐      ┌──────────────┐   │────▶│    Filecoin       │
+│          │     │  │            │      │              │   │     │ WarmStorageService│
+└──────────┘     │  │ Preprocess │─────▶│ Lit Protocol │   │     │                   │
+                 │  │            │      │   Encrypt    │   │     └──────────────────-┘
+                 │  └────────────┘      └──────────────┘   │             │
+                 │        │                                │             │
+                 │        │                                │             │
+                 │   Unique ID                             │             │
+                 │   Identifier                            │             │
+                 │        │                                │             │
+                 │        ▼                                │             │
+                 │  ┌──────────────────────────────────┐   │             │
+                 │  │      Smart Contract              │   │             │
+                 │  │                                  │   │             │
+                 │  │  ┌──────────────────────────┐    |   │             │
+                 │  │  │   Decrypt Permissions    │    |   │             │
+                 │  │  └──────────────────────────┘    |   │             │
+                 │  │                                  │   │             │
+                 │  │  ┌──────────────────────────┐    |   │             │
+                 │  │  │  Map encrypted data      │◀───|─--┼─────────────┘
+                 │  │  │      <-> commp           │    |   │
+                 │  │  └──────────────────────────┘    |   │
+                 │  └──────────────────────────────────┘   │
+                 └─────────────────────────────────────────┘
+
+## Decryption Flow
+
+┌────────────────────┐                  ┌─────────────────────────────────────────┐     ┌──────────┐
+│                    │                  │                  Keypo                  │     │          │
+│     Filecoin       │                  │                                         │     │   Data   │
+│ WarmStorageService │─── Encrypted   ─▶│  ┌──────────────┐      ┌──────────────┐ │────▶│          │
+│                    │      Data        │  │              │      │              │ │     └──────────┘
+└────────────────────┘                  │  │ Lit Protocol │─────▶│ Postprocess  │ │
+                                        │  │   Decrypt    │      │              │ │
+                                        │  └──────────────┘      └──────────────┘ │
+                                        │         ▲                               │
+                                        │         │                               │
+                                        │         ▼                               │
+                                        │  ┌──────────────────────────────────┐   │
+                                        │  │      Smart Contract              │   │
+                                        │  │                                  │   │
+                                        │  │  ┌──────────────────────────┐    │   │
+                                        │  │  │   Decrypt Permissions    │    │   │
+                                        │  │  └──────────────────────────┘    │   │
+                                        │  │                                  │   │
+                                        │  │  ┌──────────────────────────┐    │   │
+                                        │  │  │  Map encrypted data      │    │   │
+                                        │  │  │      <-> commp           │    │   │
+                                        │  │  └──────────────────────────┘    │   │
+                                        │  └──────────────────────────────────┘   │
+                                        └─────────────────────────────────────────┘
 ```
 
 ### Core Integration Components
