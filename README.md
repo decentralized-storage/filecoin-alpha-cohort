@@ -23,4 +23,4 @@ filecoin-alpha-cohort/
 ## Key Documents
 
 - **[Architecture](requirements/keypo-synapse-integration-architecture.md)** - Technical design and integration patterns
-- **[Submission](requirements/phase1_submission.md)** - Hackathon project overview
+- **[Submission](requirements/phase1_submission.md)** - Filecoin Alpha Cohort Phase 1 Submission
